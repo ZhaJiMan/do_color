@@ -47,6 +47,13 @@ def gamma_decoding(RGB):
 
     return RGB
 
+def move_toward_white(RGB):
+    '''RGB与白色混合直至色域边界.'''
+    RGB = np.array(RGB, float)
+    RGB -= RGB.min(axis=-1, keepdims=True).clip(None, 0)
+
+    return RGB
+
 def normalize_by_maximum(RGB):
     '''分别用RGB里三个分量的最大值做归一化.'''
     RGB = np.array(RGB, float)

@@ -9,7 +9,21 @@ from common import *
 
 xyz_cc = load_xyz_cc()
 rgb_cc = load_rgb_cc()
-N = 256
+
+def normal_direction(x, y):
+    '''计算离散曲线每一点的法向cos和sin值.'''
+    xy = np.column_stack((x, y))
+    dxdy = np.zeros_like(xy)
+    dxdy[0] = xy[1] - xy[0]
+    dxdy[-1] = xy[-1] - xy[-2]
+    dxdy[1:-1] = xy[2:] - xy[:-2]
+    dx, dy = dxdy[:, 0], dxdy[:, 1]
+    dl = np.hypot(dx, dy)
+    dl[dl <= 0] = np.nan
+    cos = -dy / dl
+    sin = dx / dl
+
+    return cos, sin
 
 class BaseDiagram:
     '''色度图基类.'''
@@ -26,17 +40,25 @@ class BaseDiagram:
 
 class xyDiagram(BaseDiagram):
     @staticmethod
-    def generate_RGB():
-        '''生成传给imshow的RGB数组.'''
+    def get_grid():
+        '''生成RGB数组基于的网格.'''
+        N = 256
         x = np.linspace(0, 1, N)
         y = np.linspace(0, 1, N).clip(1e-3, 1)
         x, y = np.meshgrid(x, y)
-        Y = np.ones_like(x)
+
+        return x, y
+
+    def get_RGB(self):
+        '''生成传给imshow的RGB数组.'''
+        x, y = self.get_grid()
+        Y = np.ones_like(y)
         xyY = np.dstack((x, y, Y))
         XYZ = xyY_to_XYZ(xyY)
         RGB = XYZ_to_sRGB(XYZ)
+        RGB = move_toward_white(RGB)
         RGB = normalize_by_maximum(RGB)
-        RGB = gamma_encoding(RGB.clip(0, 1))
+        RGB = gamma_encoding(RGB)
 
         return RGB
 
@@ -62,7 +84,7 @@ class xyDiagram(BaseDiagram):
         self.ax.add_patch(patch)
 
         self.ax.imshow(
-            self.generate_RGB(),
+            self.get_RGB(),
             origin='lower',
             extent=[0, 1, 0, 1],
             interpolation='bilinear',
@@ -116,29 +138,27 @@ class xyDiagram(BaseDiagram):
         major_ticks = [380, *range(460, 601, 10), 620, 700]
         minor_ticks = range(380, 781, 5)
 
-        xy = xyz_cc[['x', 'y']].to_numpy()
-        dc = np.zeros_like(xy)
-        dc[0] = xy[1] - xy[0]
-        dc[-1] = xy[-1] - xy[-2]
-        dc[1:-1] = xy[2:] - xy[:-2]
-        dc = pd.DataFrame(dc, index=xyz_cc.index, columns=['dx', 'dy'])
-        dc['dl'] = np.hypot(dc['dx'], dc['dy'])
-        dc.loc[(dc.index < 430) | (dc.index > 660)] = np.nan
-        dc = dc.ffill().bfill()
-        dc['cos'] = -dc['dy'] / dc['dl']
-        dc['sin'] = dc['dx'] / dc['dl']
+        x, y = xyz_cc['x'], xyz_cc['y']
+        cos, sin = normal_direction(x, y)
+        cs = pd.DataFrame(
+            data=np.column_stack((cos, sin)),
+            index=xyz_cc.index,
+            columns=['cos', 'sin']
+        )
+        cs.loc[(cs.index < 430) | (cs.index > 660)] = np.nan
+        cs = cs.ffill().bfill()
+        cos, sin = cs['cos'], cs['sin']
 
         tick_df = pd.DataFrame({
-            'x0': xyz_cc['x'],
-            'x1': xyz_cc['x'] + major_len * dc['cos'],
-            'x2': xyz_cc['x'] + minor_len * dc['cos'],
-            'x3': xyz_cc['x'] + label_len * dc['cos'],
-            'y0': xyz_cc['y'],
-            'y1': xyz_cc['y'] + major_len * dc['sin'],
-            'y2': xyz_cc['y'] + minor_len * dc['sin'],
-            'y3': xyz_cc['y'] + label_len * dc['sin']
+            'x0': x,
+            'x1': x + major_len * cos,
+            'x2': x + minor_len * cos,
+            'x3': x + label_len * cos,
+            'y0': y,
+            'y1': y + major_len * sin,
+            'y2': y + minor_len * sin,
+            'y3': y + label_len * sin
         })
-
         major_df = tick_df.loc[major_ticks]
         minor_df = tick_df.loc[minor_ticks]
 
@@ -171,17 +191,25 @@ class xyDiagram(BaseDiagram):
 
 class rgDiagram(BaseDiagram):
     @staticmethod
-    def generate_RGB():
+    def get_grid():
+        '''生成RGB数组基于的网格.'''
+        N = 256
+        x = np.linspace(-1.5, 2, N)
+        y = np.linspace(-1.5, 2, N).clip(1e-3, 2)
+        x, y = np.meshgrid(x, y)
+
+        return x, y
+
+    def get_RGB(self):
         '''生成传给imshow的RGB数组.'''
-        r = np.linspace(-1.5, 2, N)
-        g = np.linspace(-1.5, 2, N).clip(1e-3, 2)
-        r, g = np.meshgrid(r, g)
-        G = np.ones_like(r)
+        r, g = self.get_grid()
+        G = np.ones_like(g)
         rgG = np.dstack((r, g, G))
         RGB = xyY_to_XYZ(rgG)
         RGB = XYZ_to_sRGB(RGB_to_XYZ(RGB))
+        RGB = move_toward_white(RGB)
         RGB = normalize_by_maximum(RGB)
-        RGB = gamma_encoding(RGB.clip(0, 1))
+        RGB = gamma_encoding(RGB)
 
         return RGB
 
@@ -207,7 +235,7 @@ class rgDiagram(BaseDiagram):
         self.ax.add_patch(patch)
 
         self.ax.imshow(
-            self.generate_RGB(),
+            self.get_RGB(),
             origin='lower',
             extent=[-1.5, 2, -1.5, 2],
             interpolation='bilinear',
@@ -242,29 +270,27 @@ class rgDiagram(BaseDiagram):
         major_ticks = [380, *range(480, 581, 10), 600, 700]
         minor_ticks = range(380, 701, 5)
 
-        xy = rgb_cc[['r', 'g']].to_numpy()
-        dc = np.zeros_like(xy)
-        dc[0] = xy[1] - xy[0]
-        dc[-1] = xy[-1] - xy[-2]
-        dc[1:-1] = xy[2:] - xy[:-2]
-        dc = pd.DataFrame(dc, index=rgb_cc.index, columns=['dx', 'dy'])
-        dc['dl'] = np.hypot(dc['dx'], dc['dy'])
-        dc.loc[(dc.index < 430) | (dc.index > 660)] = np.nan
-        dc = dc.ffill().bfill()
-        dc['cos'] = -dc['dy'] / dc['dl']
-        dc['sin'] = dc['dx'] / dc['dl']
+        x, y = rgb_cc['r'], rgb_cc['g']
+        cos, sin = normal_direction(x, y)
+        cs = pd.DataFrame(
+            data=np.column_stack((cos, sin)),
+            index=rgb_cc.index,
+            columns=['cos', 'sin']
+        )
+        cs.loc[(cs.index < 430) | (cs.index > 660)] = np.nan
+        cs = cs.ffill().bfill()
+        cos, sin = cs['cos'], cs['sin']
 
         tick_df = pd.DataFrame({
-            'x0': rgb_cc['r'],
-            'x1': rgb_cc['r'] + major_len * dc['cos'],
-            'x2': rgb_cc['r'] + minor_len * dc['cos'],
-            'x3': rgb_cc['r'] + label_len * dc['cos'],
-            'y0': rgb_cc['g'],
-            'y1': rgb_cc['g'] + major_len * dc['sin'],
-            'y2': rgb_cc['g'] + minor_len * dc['sin'],
-            'y3': rgb_cc['g'] + label_len * dc['sin']
+            'x0': x,
+            'x1': x + major_len * cos,
+            'x2': x + minor_len * cos,
+            'x3': x + label_len * cos,
+            'y0': y,
+            'y1': y + major_len * sin,
+            'y2': y + minor_len * sin,
+            'y3': y + label_len * sin
         })
-
         major_df = tick_df.loc[major_ticks]
         minor_df = tick_df.loc[minor_ticks]
 
